@@ -15,7 +15,12 @@ export function connect() {
 	};
 
 	ws.onclose = () => {
+		ws = null;
 		setTimeout(connect, 1000);
+	};
+
+	ws.onerror = () => {
+		ws?.close();
 	};
 }
 
