@@ -11,21 +11,12 @@ export function connect() {
 		const data: WSEvent = JSON.parse(event.data);
 		if (data.type === 'state_sync') {
 			state.set(data.payload);
-		} else {
-			// For individual events, refetch full state
-			fetchState();
 		}
 	};
 
 	ws.onclose = () => {
-		setTimeout(connect, 1000); // reconnect
+		setTimeout(connect, 1000);
 	};
-}
-
-async function fetchState() {
-	const res = await fetch('/api/state');
-	const data = await res.json();
-	state.set(data);
 }
 
 export async function addOrder(type: 'normal' | 'vip') {

@@ -57,7 +57,7 @@ func (e *Engine) emit(event Event) {
 func (e *Engine) AddOrder(orderType core.OrderType) *core.Order {
 	e.mu.Lock()
 	o := e.queue.Add(orderType)
-	e.emit(Event{Type: "order_created", Payload: o})
+	e.emitStateSync()
 	// Notify idle bots
 	for _, bh := range e.bots {
 		if bh.bot.Status == core.Idle {
@@ -81,7 +81,7 @@ func (e *Engine) AddBot() *core.Bot {
 		stop:   make(chan struct{}),
 	}
 	e.bots = append(e.bots, bh)
-	e.emit(Event{Type: "bot_created", Payload: b})
+	e.emitStateSync()
 	e.mu.Unlock()
 
 	go e.runBot(bh)
@@ -114,7 +114,7 @@ func (e *Engine) tryPickup(bh *botHandle) {
 		return
 	}
 	bh.bot.Assign(o)
-	e.emit(Event{Type: "order_processing", Payload: map[string]interface{}{"bot": bh.bot, "order": o}})
+	e.emitStateSync()
 	e.mu.Unlock()
 
 	// Process order
@@ -124,8 +124,7 @@ func (e *Engine) tryPickup(bh *botHandle) {
 		e.mu.Lock()
 		completed := bh.bot.Complete()
 		e.completed = append(e.completed, completed)
-		e.emit(Event{Type: "order_completed", Payload: map[string]interface{}{"bot": bh.bot, "order": completed}})
-		e.emit(Event{Type: "bot_idle", Payload: bh.bot})
+		e.emitStateSync()
 		e.mu.Unlock()
 
 		// Check for more orders
@@ -158,13 +157,10 @@ func (e *Engine) RemoveBot() {
 	}
 
 	close(bh.stop)
-	e.emit(Event{Type: "bot_destroyed", Payload: bh.bot})
+	e.emitStateSync()
 }
 
-func (e *Engine) State() State {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
+func (e *Engine) state() State {
 	bots := make([]*core.Bot, len(e.bots))
 	for i, bh := range e.bots {
 		// Deep copy to avoid races with goroutines modifying bot state
@@ -176,9 +172,28 @@ func (e *Engine) State() State {
 		bots[i] = &botCopy
 	}
 
+	// Include processing orders (from bots) alongside pending queue orders
+	pending := e.queue.Pending()
+	for _, bh := range e.bots {
+		if bh.bot.Status == core.BotProcessing && bh.bot.Order != nil {
+			orderCopy := *bh.bot.Order
+			pending = append(pending, &orderCopy)
+		}
+	}
+
 	return State{
-		PendingOrders:   e.queue.Pending(),
+		PendingOrders:   pending,
 		CompletedOrders: append([]*core.Order{}, e.completed...),
 		Bots:            bots,
 	}
+}
+
+func (e *Engine) State() State {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.state()
+}
+
+func (e *Engine) emitStateSync() {
+	e.emit(Event{Type: "state_sync", Payload: e.state()})
 }
